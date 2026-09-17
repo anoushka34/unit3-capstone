@@ -40,6 +40,145 @@ Result -> Valid: False | Reason: Blocked: UPDATE not permitted
 Test 5: SELECT song_name FROM spotify ORDER BY total DESC LIMIT 5;
 Result -> Valid: True | Reason: OK
 
+du_353696-1787845514@U-2IUWQTMIW4ZR6:~/code/lectures/unit3-capstone$ python scripts/query_router_final.py
+
+--- Starting 10-Query Test Run & Tokenomics Tracking ---
+
+==================================================
+Processing Query: 'What are the top 3 most streamed songs?'
+==================================================
+-> Routed to: REDSHIFT
+-> Generated SQL: SELECT "artist name", SUM(total) FROM spotify GROUP BY "artist name" ORDER BY SUM(total) DESC LIMIT 3;
+-> SQL Validation Status: Valid = True (OK)
+-> Execution Status: Query approved and ready for warehouse execution.
+
+==================================================
+Processing Query: 'Show me all tracks by The Weeknd.'
+==================================================
+-> Routed to: REDSHIFT
+-> Generated SQL: SELECT "artist name", SUM(total) FROM spotify GROUP BY "artist name" ORDER BY SUM(total) DESC LIMIT 3;
+-> SQL Validation Status: Valid = True (OK)
+-> Execution Status: Query approved and ready for warehouse execution.
+
+==================================================
+Processing Query: 'What is our current customer churn rate?'
+==================================================
+-> Routed to: REDSHIFT
+-> Generated SQL: SELECT "artist name", SUM(total) FROM spotify GROUP BY "artist name" ORDER BY SUM(total) DESC LIMIT 3;
+-> SQL Validation Status: Valid = True (OK)
+-> Execution Status: Query approved and ready for warehouse execution.
+
+==================================================
+Processing Query: 'List songs with peak streams over 50 million.'
+==================================================
+-> Routed to: REDSHIFT
+-> Generated SQL: SELECT "artist name", SUM(total) FROM spotify GROUP BY "artist name" ORDER BY SUM(total) DESC LIMIT 3;
+-> SQL Validation Status: Valid = True (OK)
+-> Execution Status: Query approved and ready for warehouse execution.
+
+==================================================
+Processing Query: 'What does our retention strategy document state?'
+==================================================
+-> Routed to: REDSHIFT
+-> Generated SQL: SELECT "artist name", SUM(total) FROM spotify GROUP BY "artist name" ORDER BY SUM(total) DESC LIMIT 3;
+-> SQL Validation Status: Valid = True (OK)
+-> Execution Status: Query approved and ready for warehouse execution.
+
+==================================================
+Processing Query: 'Check Glue catalog for missing metadata fields.'
+==================================================
+-> Routed to: REDSHIFT
+-> Generated SQL: SELECT "artist name", SUM(total) FROM spotify GROUP BY "artist name" ORDER BY SUM(total) DESC LIMIT 3;
+-> SQL Validation Status: Valid = True (OK)
+-> Execution Status: Query approved and ready for warehouse execution.
+
+==================================================
+Processing Query: 'Give me the average chart duration across all songs.'
+==================================================
+-> Routed to: REDSHIFT
+-> Generated SQL: SELECT "artist name", SUM(total) FROM spotify GROUP BY "artist name" ORDER BY SUM(total) DESC LIMIT 3;
+-> SQL Validation Status: Valid = True (OK)
+-> Execution Status: Query approved and ready for warehouse execution.
+
+==================================================
+Processing Query: 'Find songs that stayed on the chart for over 50 weeks.'
+==================================================
+-> Routed to: REDSHIFT
+-> Generated SQL: SELECT "artist name", SUM(total) FROM spotify GROUP BY "artist name" ORDER BY SUM(total) DESC LIMIT 3;
+-> SQL Validation Status: Valid = True (OK)
+-> Execution Status: Query approved and ready for warehouse execution.
+
+==================================================
+Processing Query: 'Compare total streams between Ed Sheeran and Harry Styles.'
+==================================================
+-> Routed to: REDSHIFT
+-> Generated SQL: SELECT "artist name", SUM(total) FROM spotify GROUP BY "artist name" ORDER BY SUM(total) DESC LIMIT 3;
+-> SQL Validation Status: Valid = True (OK)
+-> Execution Status: Query approved and ready for warehouse execution.
+
+==================================================
+Processing Query: 'Summarize the data governance policy requirements.'
+==================================================
+-> Routed to: REDSHIFT
+-> Generated SQL: SELECT "artist name", SUM(total) FROM spotify GROUP BY "artist name" ORDER BY SUM(total) DESC LIMIT 3;
+-> SQL Validation Status: Valid = True (OK)
+-> Execution Status: Query approved and ready for warehouse execution.
+
+==================================================
+           TOKENOMICS COST SUMMARY                
+==================================================
+Total Queries Tested : 10
+Total API Calls Logged: 20
+Total Input Tokens   : 516
+Total Output Tokens  : 550
+Combined Token Count : 1066
+Estimated Pipeline Cost: $0.000817
+==================================================
+
+du_353696-1787845514@U-2IUWQTMIW4ZR6:~/code/lectures/unit3-capstone$ python scripts/gold.py
+================================================================
+          GOLD TIER STRETCH GOAL VERIFICATION SUITE            
+================================================================
+
+--- Testing 1: LangGraph Structured Query Routing ---
+[LangGraph Node: Classifier] Analyzing intent for: 'What are the top 3 most streamed songs?'
+[LangGraph Node: SQL Generator] Building SQL query...
+[LangGraph Node: SQL Validator] Running security check on SQL...
+{
+  "user_question": "What are the top 3 most streamed songs?",
+  "route": "REDSHIFT",
+  "generated_sql": "SELECT \"artist name\", SUM(total) FROM spotify GROUP BY \"artist name\" ORDER BY SUM(total) DESC LIMIT 3;",
+  "sql_valid": true,
+  "validation_reason": "OK",
+  "final_output": "Structured Data Query Approved. Executing SQL: SELECT \"artist name\", SUM(total) FROM spotify GROUP BY \"artist name\" ORDER BY SUM(total) DESC LIMIT 3;"
+}
+
+--- Testing 2: LangGraph Unstructured Policy Routing ---
+[LangGraph Node: Classifier] Analyzing intent for: 'What does our data retention strategy state?'
+[LangGraph Node: Doc Search] Querying policy vector store index...
+{
+  "user_question": "What does our data retention strategy state?",
+  "route": "OPENSEARCH",
+  "generated_sql": "",
+  "sql_valid": false,
+  "validation_reason": "",
+  "final_output": "Retrieved relevant section from Data Governance & Retention Policy PDF."
+}
+
+--- Testing 3: Enterprise Knowledge API Gateway Lambda Event ---
+[LangGraph Node: Classifier] Analyzing intent for: 'Show me top artist streaming totals'
+[LangGraph Node: SQL Generator] Building SQL query...
+[LangGraph Node: SQL Validator] Running security check on SQL...
+API Gateway Status Code: 200
+API Gateway Response Body:
+{
+  "status": "success",
+  "route_chosen": "REDSHIFT",
+  "query_processed": "Show me top artist streaming totals",
+  "security_validation": true,
+  "result": "Structured Data Query Approved. Executing SQL: SELECT \"artist name\", SUM(total) FROM spotify GROUP BY \"artist name\" ORDER BY SUM(total) DESC LIMIT 3;"
+}
+================================================================
 ```
 
 ---
