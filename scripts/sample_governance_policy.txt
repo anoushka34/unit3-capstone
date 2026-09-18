@@ -1,0 +1,28 @@
+DATA GOVERNANCE & RETENTION POLICY
+Capstone Project - Sample Policy Document
+
+1. CUSTOMER RETENTION STRATEGY
+Our retention strategy targets a maximum acceptable monthly churn rate of 5%.
+Any month where churn exceeds this threshold requires a root-cause review by
+the analytics team within 10 business days. Retention efforts prioritize
+high-engagement users (top quartile by weekly session count) and focus on
+proactive outreach rather than reactive discounting.
+
+2. DATA GOVERNANCE REQUIREMENTS
+All structured datasets ingested into the data catalog must include the
+following metadata fields at minimum:
+  - source_system
+  - ingestion_date
+  - data_owner
+  - retention_period_days
+  - pii_classification (none | low | medium | high)
+
+Datasets missing any of the above fields are considered non-compliant and
+must be flagged for remediation before being used in downstream reporting
+or made available to the AI query layer.
+
+3. SCHEMA CATALOGING
+All datasets must be registered in the central schema catalog (AWS Glue
+Data Catalog) prior to use. Manual registration is acceptable when
+automated discovery tools are unavailable, provided the resulting schema
+is reviewed for accuracy against the source data.

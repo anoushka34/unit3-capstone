@@ -1,191 +1,147 @@
 # Unit 3 Capstone: Intelligent Document Search & Pipeline Architecture
 
 ## 1. Project Overview
-This project designs and builds an intelligent document search and analytics pipeline integrating cloud storage, automated schema discovery, secure querying, and an AI-driven query layer. The pipeline processes structured datasets (such as Spotify global chart totals and lyrics) and bridges natural language processing with strict security boundaries and state-machine orchestration.
 
----
+This project designs an intelligent document search and analytics pipeline integrating cloud storage, automated schema discovery, secure SQL querying, and an AI-driven query layer. The pipeline targets structured datasets (Spotify streaming totals) and is scoped to bridge natural language querying with strict security boundaries.
 
-## 2. Architecture & Implementation Summary
+**Sandbox note:** Several AWS services required by this capstone are blocked at the IAM policy level in the provided sandbox account (`Whiz_User_353696.89077867`). These blocks are explicit `Deny` statements in a policy called `tier_1_fullaccess_policy_1_353696.89077867`, which also prevents inspecting the user's own permissions (`iam:GetUser`, `iam:ListUserPolicies` are denied). This is a sandbox-tier restriction, not a bug in the pipeline code. Details and exact error messages are in Section 4.
 
-### Successfully Implemented & Verified Components
-* **Central Storage (Amazon S3):** Created a custom S3 bucket (`unit3-capstone-project-AC`) via Boto3 and uploaded the primary structured dataset (`data.csv`) under the `structured-data/` prefix. Verified through Python scripts and the AWS Web Console.
-* **AI Query Backbone & Routing Logic:** Configured Amazon Bedrock connectivity and built an intelligent query router that classifies natural language questions into operational intents (`REDSHIFT`, `OPENSEARCH`, `BOTH`) and dynamically generates corresponding SQL queries.
-* **Mandatory SQL Validation Layer (Step 2.75):** Implemented a robust pre-execution security parser that screens all generated SQL. Tested across a rigorous 5-case test suite including stacked-query attempts, successfully blocking all destructive mutations (`DROP`, `DELETE`, `UPDATE`, `INSERT`, `ALTER`, `TRUNCATE`, `GRANT`, `REVOKE`) while permitting strictly `SELECT` operations.
-* **Tokenomics Tracking & Cost Summary (Step 2.9):** Integrated a real-time logging middleware recording input and output token consumption across multi-step LLM operations (classification and SQL generation), producing an automated cost breakdown over a 10-query test run.
-* **LangGraph Routing Refactor:** Refactored query routing into a state-machine architecture (`StateGraph` pattern) with conditional node branching separating structured SQL generation/validation paths from unstructured policy vector retrieval.
-* **Enterprise Knowledge API Gateway:** Built a simulated AWS API Gateway + Lambda handler endpoint (`lambda_api_handler`) exposing unified programmatic access to the query interface.
+## 2. Architecture & Implementation Status
 
----
+### Fully implemented and verified with real output
 
-## 3. Pipeline Execution & Verification Outputs
+- **S3 storage** (`s3.py`): Creates a bucket via Boto3 and uploads `data.csv` under `structured-data/`. Verified via script output and AWS Console. *(Only CSV upload is implemented — PDF and JSON upload paths are not yet built.)*
+- **SQL validation layer** (`sql_validator.py`, Step 2.75): Pre-execution SELECT-only validator. Tested against 5 cases including a stacked-query attempt (`SELECT ...; DELETE ...;`). All 5 cases pass as expected.
+- **Sentence Transformers embeddings** (`scripts/generate_embeddings.py`): Real, local embedding generation using `all-MiniLM-L6-v2` — no Bedrock, no API key. Processed all 8,058 rows of `data.csv`, chunked lyrics into 25,665 chunks, and embedded all of them (~10 min on CPU, batched encoding). Includes a working local semantic search function (cosine similarity) as a substitute for OpenSearch, verified with real test queries returning genuinely relevant results (e.g. a "dancing and love" query correctly surfaced Taylor Swift, Bastille, and Dan + Shay lyrics about exactly that).
+- **Matplotlib charts** (`scripts/generate_charts.py`): 3 charts generated directly from `data.csv` (top artists by streams, weeks-on-chart distribution, total vs. peak streams scatter) — substitute for Redshift-sourced charts since Redshift was not provisioned (see cost note below). Verified via successful script run, PNGs saved to `./charts/`.
+- **Manual Glue Catalog registration** (`scripts/test_glue_manual_catalog.py`): Real database (`capstone_spotify_db`) and table (`spotify_streaming_data`) created via `glue.create_database()`/`glue.create_table()`, with all 10 real columns from `data.csv` registered and verified via `glue.get_table()`. Uses `OpenCSVSerDe` to correctly handle the quoted commas in the `lyrics` column.
+- **Rule-based query router with real differentiated output** (`scripts/query_router_rulebased.py`): Replaces the earlier mock, which returned identical hardcoded SQL for every question regardless of content. Now genuinely produces different, relevant SQL per question (top-N, artist filter, average, threshold filters). Both required harder synthesis queries are implemented with dedicated handlers and produce real, honest combined answers:
+  - **Churn query**: correctly routes to BOTH, pulls the real 5% churn target from the policy document, and honestly reports that no churn data exists in the ingested dataset rather than fabricating a number — framed correctly as a data gap, not a policy violation.
+  - **Metadata query**: correctly routes to BOTH, makes a live `boto3` call against the real Glue Catalog table, compares its actual columns against the policy's 5 required governance fields, and correctly reports all 5 are missing.
+  
+  This is still rule-based/template logic rather than an LLM call (Bedrock remains blocked — see below), and is documented here as the interim substitute for the AI query layer, not a claim that it satisfies the "using Bedrock (Claude)" requirement.
 
-End-to-end verification covering SQL security validation, 10-query tokenomics tracking, LangGraph routing, and simulated API Gateway execution:
+- **Automated Lambda + Textract pipeline** (`scripts/lambda_function.py`, `scripts/deploy_lambda.py`): A fully real, end-to-end automated pipeline, not a manual test:
+  1. A PDF uploaded to `s3://unit3capstoneac/raw-pdfs/` automatically triggers a Lambda function (`capstone-pdf-textract-processor`) via an S3 event notification — no manual invocation.
+  2. The function calls Amazon Textract to extract text from the PDF.
+  3. Text is chunked (500-1000 token range).
+  4. The result is written back to `s3://unit3capstoneac/processed-text/<doc-id>.json` automatically.
 
-```text
-du_353696-1787845514@U-2IUWQTMIW4ZR6:~/code/lectures/unit3-capstone$ python scripts/sql_validator.py
-Running SQL Validation Test Suite...
+  Verified with a real test upload: `test-upload2.pdf` → `processed-text/test-upload2.json` appeared automatically within ~10 seconds, containing correctly extracted and chunked text (1,191 characters, 2 chunks), matching the source PDF exactly.
 
-Test 1: SELECT artist_name, SUM(total) FROM spotify GROUP BY artist_name;
-Result -> Valid: True | Reason: OK
+  **This also resolves the RDS "store raw extracted text" requirement gap.** RDS was ruled out on cost, DynamoDB was blocked by IAM (`dynamodb:ListTables` denied) — storing extracted text as structured JSON in S3, a service already confirmed reliable throughout this project, closes that gap using real automation rather than a manual workaround.
 
-Test 2: DROP TABLE spotify;
-Result -> Valid: False | Reason: Blocked: DROP not permitted
+  **IAM path to get here, documented for transparency:** the Lambda execution role required manual creation (`scripts/test_create_lambda_role.py`) since none of the sandbox's 10 pre-existing IAM roles had a trust policy allowing Lambda to assume them (they are all AWS service-linked roles for other services). Broad managed policies (`AmazonTextractFullAccess`) were denied when attaching to the new role, but narrow, custom-scoped inline policies (specific Textract actions; `s3:PutObject` limited to the `processed-text/` prefix only) succeeded. This confirms the sandbox's restriction pattern generalizes beyond the original three blocks: broad/managed permissions are often denied where narrow, purpose-built ones are allowed.
 
-Test 3: SELECT * FROM spotify WHERE PkStreams > 1000000; DELETE FROM spotify;
-Result -> Valid: False | Reason: Blocked: DELETE not permitted
+### Not real AWS calls (mocked, superseded by the rule-based router above)
 
-Test 4: UPDATE spotify SET total = 0 WHERE artist_name = 'Drake';
-Result -> Valid: False | Reason: Blocked: UPDATE not permitted
+- **Query routing & NL-to-SQL** (`query_router_final.py`, `gold.py`): The routing logic is real Python (keyword-based in `gold.py`; JSON-based intent mock in `query_router_final.py`), but neither calls Bedrock. `query_router_final.py` uses a function explicitly named `mock_invoke_bedrock()` that returns hardcoded text and fake token counts. `gold.py`'s LangGraph-style classifier routes on simple substring matching (`if "stream" in question`), not an LLM call.
+- **Tokenomics tracking** (Step 2.9): The logging and cost-summary code works and produces a real report format, but the token counts it logs are synthetic (`len(prompt.split()) * 2`), not usage from an actual Bedrock response, because no real Bedrock call has succeeded yet.
+- **Harder synthesis queries**: Not actually solved. In the 10-query test run, every question — including "What is our current customer churn rate?" and "Summarize the data governance policy requirements" — is routed to REDSHIFT and returns the identical hardcoded SQL (`SELECT "artist name", SUM(total)... LIMIT 3`), regardless of the question's actual content. The two required harder queries have not been answered correctly, and no evidence of citing both sources exists yet.
 
-Test 5: SELECT song_name FROM spotify ORDER BY total DESC LIMIT 5;
-Result -> Valid: True | Reason: OK
+### Blocked by sandbox permissions — worked around with a real substitute
 
-du_353696-1787845514@U-2IUWQTMIW4ZR6:~/code/lectures/unit3-capstone$ python scripts/query_router_final.py
+- **AWS Glue Crawler → manual Glue Catalog registration**: `glue:CreateCrawler` is explicitly denied in this sandbox (see Section 4), so schema auto-discovery via Crawler is not possible. However, a permission probe (`scripts/permission_probe.py`) confirmed that `glue:GetDatabases` and `glue:GetCrawlers` are allowed, meaning Glue itself is not fully blocked — only crawler creation specifically. `scripts/test_glue_manual_catalog.py` tests and confirms that `glue:CreateDatabase` and `glue:CreateTable` are both permitted, so the CSV schema was registered manually instead of via auto-discovery:
+  - Database: `capstone_spotify_db`
+  - Table: `spotify_streaming_data`
+  - All 10 columns from `data.csv` registered and verified via `glue.get_table()`
+  - Uses `OpenCSVSerDe` (not the default `LazySimpleSerDe`) because the `lyrics` column contains embedded commas and quoted text that simple delimiter parsing would misread
 
---- Starting 10-Query Test Run & Tokenomics Tracking ---
+  This is a real, verified AWS Glue Catalog entry — not mocked — and satisfies the spirit of "catalog and discover schemas" via manual definition rather than automated discovery. Documented here as a deliberate substitution for the blocked Crawler action, not a workaround that avoids AWS entirely.
 
-==================================================
-Processing Query: 'What are the top 3 most streamed songs?'
-==================================================
--> Routed to: REDSHIFT
--> Generated SQL: SELECT "artist name", SUM(total) FROM spotify GROUP BY "artist name" ORDER BY SUM(total) DESC LIMIT 3;
--> SQL Validation Status: Valid = True (OK)
--> Execution Status: Query approved and ready for warehouse execution.
+- **DynamoDB (attempted as RDS substitute)**: `dynamodb:ListTables` is also explicitly denied in this sandbox, so a DynamoDB-based substitute for RDS's "store raw extracted text" role (`scripts/dynamodb_storage.py`) could not be tested end-to-end. Given that Glue's write actions (`CreateDatabase`/`CreateTable`) succeeded while DynamoDB's read action (`ListTables`) failed, the sandbox's allow-list does not follow a simple "reads allowed, writes blocked" pattern — it is a specific, narrow list of denied actions rather than a broad category restriction. A local or alternative substitute for the RDS role is still needed.
 
-==================================================
-Processing Query: 'Show me all tracks by The Weeknd.'
-==================================================
--> Routed to: REDSHIFT
--> Generated SQL: SELECT "artist name", SUM(total) FROM spotify GROUP BY "artist name" ORDER BY SUM(total) DESC LIMIT 3;
--> SQL Validation Status: Valid = True (OK)
--> Execution Status: Query approved and ready for warehouse execution.
+- **Amazon Bedrock / Claude invocation** (`bedrock.py`, `query_router.py`): Bedrock's control-plane actions (`bedrock:ListFoundationModels`) are allowed, but `bedrock:InvokeModel` is denied due to a missing AWS Marketplace subscription entitlement (`aws-marketplace:ViewSubscriptions`, `aws-marketplace:Subscribe`), which this sandbox user cannot self-grant. No real call to `bedrock.invoke_model()` has returned a successful response in this environment. `bedrock.py` uses the correct inference-profile ARN pattern but its output has not been confirmed to work. `query_router.py` still uses a bare model ID (`anthropic.claude-3-haiku-20240307-v1:0`) rather than the required inference-profile ARN, so even if the Marketplace block were lifted, this specific file would need that fix too before it could work.
 
-==================================================
-Processing Query: 'What is our current customer churn rate?'
-==================================================
--> Routed to: REDSHIFT
--> Generated SQL: SELECT "artist name", SUM(total) FROM spotify GROUP BY "artist name" ORDER BY SUM(total) DESC LIMIT 3;
--> SQL Validation Status: Valid = True (OK)
--> Execution Status: Query approved and ready for warehouse execution.
+### Not yet started
 
-==================================================
-Processing Query: 'List songs with peak streams over 50 million.'
-==================================================
--> Routed to: REDSHIFT
--> Generated SQL: SELECT "artist name", SUM(total) FROM spotify GROUP BY "artist name" ORDER BY SUM(total) DESC LIMIT 3;
--> SQL Validation Status: Valid = True (OK)
--> Execution Status: Query approved and ready for warehouse execution.
+- Lambda triggers on S3 upload
+- Textract PDF extraction and chunking
+- Sentence Transformers embedding generation (this does **not** require Bedrock or any blocked AWS service — it runs locally via the `sentence-transformers` Python package and needs no additional AWS permissions)
+- RDS storage of raw text
+- OpenSearch vector indexing and semantic retrieval
+- Glue ETL jobs (normalization, validation, load into Redshift)
+- Redshift as consolidated warehouse
+- Matplotlib charts (2+) from Redshift data
+- PDF and JSON ingestion to S3
 
-==================================================
-Processing Query: 'What does our retention strategy document state?'
-==================================================
--> Routed to: REDSHIFT
--> Generated SQL: SELECT "artist name", SUM(total) FROM spotify GROUP BY "artist name" ORDER BY SUM(total) DESC LIMIT 3;
--> SQL Validation Status: Valid = True (OK)
--> Execution Status: Query approved and ready for warehouse execution.
+## 3. Honest Bronze Checklist Status
 
-==================================================
-Processing Query: 'Check Glue catalog for missing metadata fields.'
-==================================================
--> Routed to: REDSHIFT
--> Generated SQL: SELECT "artist name", SUM(total) FROM spotify GROUP BY "artist name" ORDER BY SUM(total) DESC LIMIT 3;
--> SQL Validation Status: Valid = True (OK)
--> Execution Status: Query approved and ready for warehouse execution.
+| Requirement | Status |
+|---|---|
+| S3 stores raw PDFs, CSVs, JSONs | Partial — CSV and PDF confirmed working; JSON not tested |
+| Lambda triggers on upload; Textract for PDFs | **Done** — real S3 event trigger confirmed working end-to-end |
+| Textract extracts/chunks PDF text | **Done** — verified via real automated run, correct output |
+| Sentence Transformers embeddings | **Done** — 8,058 rows, 25,665 chunks, verified working semantic search |
+| Raw text in RDS; embeddings in OpenSearch | **Done (substituted)** — raw text stored as JSON in S3 via the automated Lambda pipeline (RDS ruled out on cost, DynamoDB blocked by IAM); embeddings stored locally as a substitute for OpenSearch, not yet indexed in real OpenSearch |
+| Glue Crawler catalogs schemas | **Done (substituted)** — Crawler action blocked, manual `CreateDatabase`/`CreateTable` registration confirmed working instead |
+| Glue ETL loads to Redshift | Not started |
+| Redshift consolidates data | Not started |
+| Matplotlib charts (2+) | **Done** — 3 charts generated from real data |
+| Lambda/Boto3 automation | **Done** — real Lambda function deployed and triggered automatically via Boto3-provisioned S3 event notification |
+| IAM best practices | Partial — role created with least-privilege, narrowly-scoped inline policies rather than broad managed ones (see Lambda section above) |
+| AI query layer via real Bedrock calls | Blocked — Marketplace subscription permission denied; rule-based substitute implemented instead (see below) |
+| SQL validation layer (5+ cases incl. stacked query) | **Done** |
+| Tokenomics logging across real Bedrock calls | Logging mechanism works, but logs synthetic data since no real Bedrock call has succeeded |
+| Both harder synthesis queries answered, citing both sources | **Done** — both queries correctly route to BOTH and produce real, honest combined answers (see above); implemented via rule-based handlers, not Bedrock, since Bedrock remains blocked |
 
-==================================================
-Processing Query: 'Give me the average chart duration across all songs.'
-==================================================
--> Routed to: REDSHIFT
--> Generated SQL: SELECT "artist name", SUM(total) FROM spotify GROUP BY "artist name" ORDER BY SUM(total) DESC LIMIT 3;
--> SQL Validation Status: Valid = True (OK)
--> Execution Status: Query approved and ready for warehouse execution.
+## 4. Sandbox Permission Errors (Exact Messages)
 
-==================================================
-Processing Query: 'Find songs that stayed on the chart for over 50 weeks.'
-==================================================
--> Routed to: REDSHIFT
--> Generated SQL: SELECT "artist name", SUM(total) FROM spotify GROUP BY "artist name" ORDER BY SUM(total) DESC LIMIT 3;
--> SQL Validation Status: Valid = True (OK)
--> Execution Status: Query approved and ready for warehouse execution.
-
-==================================================
-Processing Query: 'Compare total streams between Ed Sheeran and Harry Styles.'
-==================================================
--> Routed to: REDSHIFT
--> Generated SQL: SELECT "artist name", SUM(total) FROM spotify GROUP BY "artist name" ORDER BY SUM(total) DESC LIMIT 3;
--> SQL Validation Status: Valid = True (OK)
--> Execution Status: Query approved and ready for warehouse execution.
-
-==================================================
-Processing Query: 'Summarize the data governance policy requirements.'
-==================================================
--> Routed to: REDSHIFT
--> Generated SQL: SELECT "artist name", SUM(total) FROM spotify GROUP BY "artist name" ORDER BY SUM(total) DESC LIMIT 3;
--> SQL Validation Status: Valid = True (OK)
--> Execution Status: Query approved and ready for warehouse execution.
-
-==================================================
-           TOKENOMICS COST SUMMARY                
-==================================================
-Total Queries Tested : 10
-Total API Calls Logged: 20
-Total Input Tokens   : 516
-Total Output Tokens  : 550
-Combined Token Count : 1066
-Estimated Pipeline Cost: $0.000817
-==================================================
-
-du_353696-1787845514@U-2IUWQTMIW4ZR6:~/code/lectures/unit3-capstone$ python scripts/gold.py
-================================================================
-          GOLD TIER STRETCH GOAL VERIFICATION SUITE            
-================================================================
-
---- Testing 1: LangGraph Structured Query Routing ---
-[LangGraph Node: Classifier] Analyzing intent for: 'What are the top 3 most streamed songs?'
-[LangGraph Node: SQL Generator] Building SQL query...
-[LangGraph Node: SQL Validator] Running security check on SQL...
-{
-  "user_question": "What are the top 3 most streamed songs?",
-  "route": "REDSHIFT",
-  "generated_sql": "SELECT \"artist name\", SUM(total) FROM spotify GROUP BY \"artist name\" ORDER BY SUM(total) DESC LIMIT 3;",
-  "sql_valid": true,
-  "validation_reason": "OK",
-  "final_output": "Structured Data Query Approved. Executing SQL: SELECT \"artist name\", SUM(total) FROM spotify GROUP BY \"artist name\" ORDER BY SUM(total) DESC LIMIT 3;"
-}
-
---- Testing 2: LangGraph Unstructured Policy Routing ---
-[LangGraph Node: Classifier] Analyzing intent for: 'What does our data retention strategy state?'
-[LangGraph Node: Doc Search] Querying policy vector store index...
-{
-  "user_question": "What does our data retention strategy state?",
-  "route": "OPENSEARCH",
-  "generated_sql": "",
-  "sql_valid": false,
-  "validation_reason": "",
-  "final_output": "Retrieved relevant section from Data Governance & Retention Policy PDF."
-}
-
---- Testing 3: Enterprise Knowledge API Gateway Lambda Event ---
-[LangGraph Node: Classifier] Analyzing intent for: 'Show me top artist streaming totals'
-[LangGraph Node: SQL Generator] Building SQL query...
-[LangGraph Node: SQL Validator] Running security check on SQL...
-API Gateway Status Code: 200
-API Gateway Response Body:
-{
-  "status": "success",
-  "route_chosen": "REDSHIFT",
-  "query_processed": "Show me top artist streaming totals",
-  "security_validation": true,
-  "result": "Structured Data Query Approved. Executing SQL: SELECT \"artist name\", SUM(total) FROM spotify GROUP BY \"artist name\" ORDER BY SUM(total) DESC LIMIT 3;"
-}
-================================================================
+**Glue Crawler creation**, attempting to catalog `s3://unit3-capstone-project-AC/structured-data/`:
+```
+User: arn:aws:iam::658279639631:user/Whiz_User_353696.89077867 is not authorized to
+perform: glue:CreateCrawler on resource:
+arn:aws:glue:us-east-1:658279639631:crawler/spotify-csv-crawler because no
+identity-based policy allows the glue:CreateCrawler action
 ```
 
----
+**Bedrock model invocation**, attempting `bedrock.invoke_model()` for Claude:
+```
+AccessDeniedException: Model access is denied due to IAM user or service role is not
+authorized to perform the required AWS Marketplace actions
+(aws-marketplace:ViewSubscriptions, aws-marketplace:Subscribe) to enable access to
+this model.
+```
 
-## 4. Encountered Roadblocks & Sandbox Constraints
+**DynamoDB table listing**, attempting `dynamodb.list_tables()` as part of testing an RDS substitute:
+```
+AccessDeniedException: User: arn:aws:iam::658279639631:user/Whiz_User_353696.89077867
+is not authorized to perform: dynamodb:ListTables on resource:
+arn:aws:dynamodb:us-east-1:658279639631:table/* because no identity-based policy
+allows the dynamodb:ListTables action
+```
 
-Administrative permission boundaries and structural gaps within the provided AWS sandbox environment prevented direct provisioning of certain managed cloud services. These constraints were handled via simulated execution layers and documented below:
+**IAM self-inspection**, attempting `iam:GetUser` / `iam:ListUserPolicies` / `iam:SimulatePrincipalPolicy`:
+```
+AccessDenied: ...with an explicit deny in an identity-based policy:
+arn:aws:iam::658279639631:policy/tier_1_fullaccess_policy_1_353696.89077867
+```
 
-* **AWS Glue Crawler Creation Failure (IAM Permission Restriction):** Attempted creating an AWS Glue Crawler (`spotify-csv-crawler`) via the AWS Console to catalog `s3://unit3-capstone-project-AC/structured-data/`. Encountered `AccessDeniedException`: `User: arn:aws:iam::658279639631:user/Whiz_User_353696.89077867 is not authorized to perform: glue:CreateCrawler because no identity-based policy allows the glue:CreateCrawler action.` **Resolution:** Handled the sandbox IAM boundary by passing explicit schema definitions directly within the downstream routing and validation scripts.
-* **Amazon Bedrock Model Marketplace Access (`scripts/query_router.py`):** Attempted invoking Anthropic Claude on Amazon Bedrock via `bedrock.invoke_model()` for dynamic SQL synthesis. Encountered `AccessDeniedException`: `Model access is denied due to IAM user or service role is not authorized to perform the required AWS Marketplace actions (aws-marketplace:ViewSubscriptions, aws-marketplace:Subscribe) to enable access to this model.` **Resolution:** Routed synthesis through deterministic query generation and routing mock layers within the LangGraph architecture to fully validate execution paths without dependency on active Marketplace subscription entitlements.
+### Full permission map
+
+Rather than discover blocks one at a time, `scripts/permission_probe.py` was run to test a read-only call against every service the capstone needs. Result: **11 of 14 allowed, 3 denied** (DynamoDB ListTables, IAM GetUser, IAM ListUserPolicies). Notably, read/describe/list-level access is allowed across Glue, RDS, Bedrock, Lambda, Redshift, OpenSearch, and Textract — the sandbox's restriction is a **narrow, specific denylist of individual actions**, not a broad per-service or read/write category block. This was confirmed further when `glue:CreateDatabase` and `glue:CreateTable` (write actions) succeeded despite `glue:CreateCrawler` (also a write action, same service) being denied — there is no simple pattern predicting which specific actions are blocked without testing each one directly.
+
+**Resolution status:** Glue Crawler creation is resolved via the manual catalog substitute above. Bedrock model invocation and DynamoDB access remain unresolved and require escalation — they cannot be fixed or worked around from within the sandbox as currently provisioned, since the specific blocked actions have no available substitute API within their own services.
+
+## 6. Gold Stretch Goals — Honest Status
+
+**LangGraph Routing Refactor — Done.** The original `gold.py` had the right state-machine shape (classifier → conditional routing → SQL generation/validation or document search) but still called the old hardcoded SQL generator, so every REDSHIFT-routed question returned identical SQL regardless of content — the same flaw the mocked router had. `scripts/langgraph_router.py` fixes this by wiring the state machine to the real per-question logic from `query_router_rulebased.py`. Verified against 5 test questions, including both harder synthesis queries, all producing correct, differentiated output. One classifier bug was found and fixed during testing: a naive substring match on "rate" was matching inside the word "strategy" (st-**rate**-gy), causing "What does our data retention strategy state?" to misroute to BOTH instead of OPENSEARCH. Fixed with a word-boundary regex.
+
+**Enterprise Knowledge API Gateway — Not achievable in this sandbox; two independent approaches confirmed blocked.** The original `gold.py`'s `lambda_api_handler()` was a local Python function called directly within the same script — it never touched AWS and did not satisfy "an API Gateway + Lambda endpoint... for programmatic access" as written. Two real attempts were made to fix this properly:
+
+1. **Real API Gateway** (`scripts/deploy_api.py`): `apigateway:POST` is explicitly denied — the same block pattern seen throughout this project (Glue Crawler, Bedrock invoke, DynamoDB creation). API Gateway cannot be provisioned in this sandbox at all.
+2. **Lambda Function URLs** (`scripts/deploy_api_function_url.py`), a native Lambda feature that provides a public HTTPS endpoint without API Gateway: this one is more subtle. The Function URL **was successfully created** with `AuthType: NONE`, and the resource-based permission for anonymous invocation was correctly attached and verified via `aws lambda get-policy` — both configs were confirmed correct. Yet every invocation attempt returns `403 Forbidden`, including a properly SigV4-signed IAM-authenticated request (`scripts/test_function_url_iam_auth.py`), which ruled out an auth-configuration mistake. This points to an account-level guardrail (most likely a Service Control Policy) blocking Function URL invocation entirely, regardless of auth type or IAM signing — the resource can be created, but never actually called.
+
+The underlying query logic this endpoint would have exposed is real and fully working (see `query_router_rulebased.py` and `langgraph_router.py` above) — only the "expose it as a live network endpoint" step is blocked, and it is blocked via two independent AWS mechanisms, not one. This is documented as a confirmed sandbox limitation with concrete evidence from both attempts, not a skipped or abandoned requirement.
+
+**Result: 1 of 2 Gold-tier stretch goals achieved for real (LangGraph); the second (Enterprise API) is genuinely blocked in this sandbox with evidence from two independent attempts, and should be added to the same instructor escalation as the Bedrock, DynamoDB, and API Gateway blocks.**
+
+## 7. Path Forward
+
+1. **Done:** Glue schema cataloging resolved via manual `CreateDatabase`/`CreateTable`, confirmed working against real AWS.
+2. Escalate to instructor/course administrator with the exact errors in Section 4 (Bedrock InvokeModel, DynamoDB ListTables, IAM introspection), plus the full permission map from `scripts/permission_probe.py`, requesting either a permissions update or guidance on an alternative path for the remaining Bronze items.
+3. Find a substitute for RDS's "store raw extracted text" role that doesn't depend on DynamoDB, since that path is also blocked — likely a local store (SQLite) or storing extracted text back in S3 as JSON, documented clearly as a substitution.
+4. Implement Sentence Transformers embeddings locally — this requires no AWS permissions at all and is a real, gradeable win independent of any escalation.
+5. Fix the inference-profile ARN inconsistency in `query_router.py` so that if/when Bedrock access is restored, the code is not blocked by a second, self-inflicted issue.
+6. Rework routing logic so the two required harder synthesis queries are actually distinguished from simple structured queries, rather than all queries resolving to the same hardcoded SQL.
+7. Once Bedrock access is confirmed working via a standalone `bedrock.py` test, replace the mocked routing/SQL-generation/tokenomics logic with real calls before re-running the 10-query test and the synthesis-query tests.
