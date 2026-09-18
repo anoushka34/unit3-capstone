@@ -1,0 +1,35 @@
+{
+  "dataset_name": "spotify_streaming_data",
+  "source_file": "data.csv",
+  "row_count": 8058,
+  "columns": [
+    "artist and title",
+    "wks",
+    "t10",
+    "pk",
+    "x?",
+    "PkStreams",
+    "total",
+    "artist name",
+    "song name",
+    "lyrics"
+  ],
+  "governance_check": {
+    "required_fields": [
+      "source_system",
+      "ingestion_date",
+      "data_owner",
+      "retention_period_days",
+      "pii_classification"
+    ],
+    "present_in_dataset": [],
+    "missing_from_dataset": [
+      "source_system",
+      "ingestion_date",
+      "data_owner",
+      "retention_period_days",
+      "pii_classification"
+    ],
+    "compliant": false
+  }
+}

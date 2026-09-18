@@ -10,7 +10,7 @@ This project designs an intelligent document search and analytics pipeline integ
 
 ### Fully implemented and verified with real output
 
-- **S3 storage** (`s3.py`): Creates a bucket via Boto3 and uploads `data.csv` under `structured-data/`. Verified via script output and AWS Console. *(Only CSV upload is implemented — PDF and JSON upload paths are not yet built.)*
+- **S3 storage** (`s3.py`, `scripts/test_textract.py`, `scripts/upload_json.py`): Creates a bucket via Boto3 and uploads all three required file types — CSV (`data.csv`), PDF (`sample_governance_policy.pdf`), and JSON (`dataset_metadata.json`) — all verified via successful script runs and AWS Console. The JSON file is a real, useful artifact: dataset metadata that honestly reports the same governance gap identified elsewhere in this project (all 5 required metadata fields missing from the ingested dataset), rather than a placeholder.
 - **SQL validation layer** (`sql_validator.py`, Step 2.75): Pre-execution SELECT-only validator. Tested against 5 cases including a stacked-query attempt (`SELECT ...; DELETE ...;`). All 5 cases pass as expected.
 - **Sentence Transformers embeddings** (`scripts/generate_embeddings.py`): Real, local embedding generation using `all-MiniLM-L6-v2` — no Bedrock, no API key. Processed all 8,058 rows of `data.csv`, chunked lyrics into 25,665 chunks, and embedded all of them (~10 min on CPU, batched encoding). Includes a working local semantic search function (cosine similarity) as a substitute for OpenSearch, verified with real test queries returning genuinely relevant results (e.g. a "dancing and love" query correctly surfaced Taylor Swift, Bastille, and Dan + Shay lyrics about exactly that).
 - **Matplotlib charts** (`scripts/generate_charts.py`): 3 charts generated directly from `data.csv` (top artists by streams, weeks-on-chart distribution, total vs. peak streams scatter) — substitute for Redshift-sourced charts since Redshift was not provisioned (see cost note below). Verified via successful script run, PNGs saved to `./charts/`.
@@ -69,7 +69,7 @@ This project designs an intelligent document search and analytics pipeline integ
 
 | Requirement | Status |
 |---|---|
-| S3 stores raw PDFs, CSVs, JSONs | Partial — CSV and PDF confirmed working; JSON not tested |
+| S3 stores raw PDFs, CSVs, JSONs | **Done** — all three file types confirmed uploaded and verified |
 | Lambda triggers on upload; Textract for PDFs | **Done** — real S3 event trigger confirmed working end-to-end |
 | Textract extracts/chunks PDF text | **Done** — verified via real automated run, correct output |
 | Sentence Transformers embeddings | **Done** — 8,058 rows, 25,665 chunks, verified working semantic search |
